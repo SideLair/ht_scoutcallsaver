@@ -8,7 +8,7 @@ async function loadStats() {
     
     if (data.length > 0) {
       const lastEntry = data[data.length - 1];
-      const date = new Date(lastEntry.datetime);
+      const date = new Date(lastEntry.timestamp);
       document.getElementById('lastUpdate').textContent = date.toLocaleString('cs-CZ');
     }
   } catch (error) {
@@ -29,7 +29,7 @@ async function exportCSV() {
     
     // Create CSV content according to defined fields
     const headers = [
-      'id', 'datetime', 'youthteam_id', 'name', 'age', 'speciality', 
+      'id', 'timestamp', 'youthteam_id', 'name', 'age', 'speciality', 
       'gk', 'def', 'pm', 'w', 'pa', 'sc', 'overall', 'selected',
       'scout_name', 'scout_age', 'scout_country', 'scout_region', 'scout_focus'
     ];
@@ -38,7 +38,7 @@ async function exportCSV() {
       headers.join(','),
       ...data.map((player, index) => [
         index + 1,
-        player.datetime,
+        player.timestamp,
         player.youthteam_id,
         `"${player.name}"`,
         player.age,

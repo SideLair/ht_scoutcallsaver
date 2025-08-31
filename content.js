@@ -1,24 +1,39 @@
-// TEST - extension loaded
-console.log('Extension loaded on:', window.location.href);
+/**
+ * Hattrick Scout Saver - Content Script
+ * Modular and maintainable version
+ */
 
-// Scout page detection - extended version
-const isScoutPage = () => {
-  const urlCheck = window.location.href.includes('Youth');
-  const elementCheck = document.querySelector('ht-youth-scouts');
-  const dataCheck = window.HT?.ngHattrick?.ngYouthScouts;
-  const titleCheck = document.title.toLowerCase().includes('youth');
-  
-  console.log('URL check (Youth):', urlCheck);
-  console.log('Element check (ht-youth-scouts):', !!elementCheck);
-  console.log('Data check (HT.ngHattrick):', !!dataCheck);
-  console.log('Title check:', titleCheck);
-  
-  return urlCheck && (elementCheck || dataCheck || titleCheck);
+// Configuration
+const CONFIG = {
+  ANGULAR_TIMEOUT: 30000,
+  CHECK_INTERVAL: 500,
+  DUPLICATE_WINDOW_HOURS: 24
 };
 
-// Waiting for Angular application to load
-const waitForAngular = (callback, maxAttempts = 20) => {
+console.log('Extension loaded on:', window.location.href);
+
+// Utils module
+const utils = {
+  isYouthPage: () => window.location.href.includes('Youth'),
+  
+  extractTeamId: () => {
+    const hasBylineElement = document.querySelector('.hasByline');
+    if (!hasBylineElement) return 'unknown';
+    
+    const match = hasBylineElement.textContent.match(/\((\d+)\)/);
+    return match ? match[1] : 'unknown';
+  },
+  
+  sanitizeText: (text) => {
+    if (typeof text !== 'string') return '';
+    return text.trim().replace(/[<>]/g, '');
+  }
+};
+
+// Angular waiting utility
+const waitForAngular = (callback) => {
   let attempts = 0;
+  const maxAttempts = CONFIG.ANGULAR_TIMEOUT / CONFIG.CHECK_INTERVAL;
   
   const check = () => {
     attempts++;
@@ -26,14 +41,11 @@ const waitForAngular = (callback, maxAttempts = 20) => {
     const hasAngularElement = document.querySelector('ht-youth-scouts');
     const hasHTData = window.HT?.ngHattrick?.ngYouthScouts;
 
-    // console.log('- ht-youth-scouts element:', !!hasAngularElement);
-    // console.log('- HT data:', !!hasHTData);
-
     if (hasAngularElement || hasHTData) {
-      console.log(`Angular application found! Attempts: ${attempts}!`);
+      console.log(`Angular application found! Attempts: ${attempts}`);
       callback();
     } else if (attempts < maxAttempts) {
-      setTimeout(check, 1000);
+      setTimeout(check, CONFIG.CHECK_INTERVAL);
     } else {
       console.log('Angular application not found after', maxAttempts, 'attempts');
     }
@@ -42,138 +54,174 @@ const waitForAngular = (callback, maxAttempts = 20) => {
   check();
 };
 
-// Extract player data from DOM and JSON data
-const extractPlayerData = () => {
-  const players = [];
+// Extractor module
+const extractor = {
+  getPlayerInfo: (card) => {
+    try {
+      // Use the original working selectors
+      const nameEls = card.querySelectorAll('.scout-details-text-name b');
+      const name = nameEls.length >= 2 ? 
+        `${nameEls[0].textContent.trim()} ${nameEls[1].textContent.trim()}` : 
+        nameEls[0]?.textContent.trim() || 'unknown';
+      
+      const ageEl = card.querySelector('.scout-details-text-age');
+      const ageText = ageEl ? ageEl.textContent.replace('years', '').trim() : 'unknown';
+      const age = parseInt(ageText, 10) || 0;
+      
+      const skillGroupContent = card.querySelector('.skill-group-content');
+      const specialitySpan = skillGroupContent?.querySelector('span');
+      const speciality = specialitySpan ? specialitySpan.textContent.trim() : 'unknown';
+      
+      return {
+        name: utils.sanitizeText(name),
+        age: age,
+        speciality: utils.sanitizeText(speciality)
+      };
+    } catch (error) {
+      console.error('Error extracting player info:', error);
+      return { name: 'unknown', age: 0, speciality: 'unknown' };
+    }
+  },
   
+  getSkills: (card) => {
+    let skills = { gk: 'unknown', def: 'unknown', pm: 'unknown', w: 'unknown', pa: 'unknown', sc: 'unknown', overall: 'unknown' };
+    
+    try {
+      // Use original working logic for skills
+      const skillRows = card.querySelectorAll('table.skilltable tr');
+      
+      skillRows.forEach(row => {
+        const skillName = row.querySelector('td:first-child')?.textContent.trim().toLowerCase();
+        const skillValue = row.querySelector('ht-skill-number')?.textContent.trim();
+        
+        if (skillName === 'keeper') skills.gk = skillValue || 'unknown';
+        if (skillName === 'defending') skills.def = skillValue || 'unknown';
+        if (skillName === 'playmaking') skills.pm = skillValue || 'unknown';
+        if (skillName === 'winger') skills.w = skillValue || 'unknown';
+        if (skillName === 'passing') skills.pa = skillValue || 'unknown';
+        if (skillName === 'scoring') skills.sc = skillValue || 'unknown';
+        if (skillName === 'overall') skills.overall = skillValue || 'unknown';
+      });
+      
+    } catch (error) {
+      console.error('Error extracting skills:', error);
+    }
+    
+    return skills;
+  },
+  
+  getScoutInfo: (scoutCards, index) => {
+    let scoutInfo = { name: 'unknown', age: 'unknown', country: 'unknown', region: 'unknown', focus: 'unknown' };
+    
+    try {
+      // Use original working logic for scout info
+      if (scoutCards[index]) {
+        const scoutCard = scoutCards[index];
+        const scoutNameEls = scoutCard.querySelectorAll('.scout-details-text-name b');
+        if (scoutNameEls.length >= 2) {
+          scoutInfo.name = `${scoutNameEls[0].textContent.trim()} ${scoutNameEls[1].textContent.trim()}`;
+        }
+        
+        const scoutAgeEl = scoutCard.querySelector('.scout-details-text-age');
+        if (scoutAgeEl) {
+          scoutInfo.age = scoutAgeEl.textContent.replace('years', '').trim();
+        }
+        
+        // Looking for search criteria for scout
+        const criteriaDiv = scoutCard.parentElement?.querySelector('app-scout-search-criteria');
+        if (criteriaDiv) {
+          const countryEl = criteriaDiv.querySelector('.scout-search-criteria-country');
+          if (countryEl) scoutInfo.country = countryEl.textContent.trim();
+          
+          const regionSelect = criteriaDiv.querySelector('.scout-search-criteria-region');
+          if (regionSelect && regionSelect.value) {
+            const selectedOption = regionSelect.querySelector(`option[value="${regionSelect.value}"]`);
+            if (selectedOption) scoutInfo.region = selectedOption.textContent.trim();
+          }
+          
+          const focusSelect = criteriaDiv.querySelector('.scout-search-criteria-player-type');
+          if (focusSelect && focusSelect.value) {
+            const selectedOption = focusSelect.querySelector(`option[value="${focusSelect.value}"]`);
+            if (selectedOption) scoutInfo.focus = selectedOption.textContent.trim();
+          }
+        }
+      }
+      
+      return {
+        name: utils.sanitizeText(scoutInfo.name),
+        age: scoutInfo.age,
+        country: utils.sanitizeText(scoutInfo.country),
+        region: utils.sanitizeText(scoutInfo.region),
+        focus: utils.sanitizeText(scoutInfo.focus)
+      };
+    } catch (error) {
+      console.error('Error extracting scout info:', error);
+      return { name: 'unknown', age: 'unknown', country: 'unknown', region: 'unknown', focus: 'unknown' };
+    }
+  }
+};
+
+// Extract player data using modular approach
+const extractPlayerData = () => {
   console.log('Starting player data extraction...');
   
   try {
-    // DOM parsing
-    {
-      const prospectCards = document.querySelectorAll('app-scout-prospect');
-      
-      prospectCards.forEach((card, index) => {
-        if (index >= 3) return;
-        
-        try {
-          // Basic player information
-          const nameEls = card.querySelectorAll('.scout-details-text-name b');
-          const name = nameEls.length >= 2 ? 
-            `${nameEls[0].textContent.trim()} ${nameEls[1].textContent.trim()}` : 
-            nameEls[0]?.textContent.trim() || 'unknown';
-          
-          const ageEl = card.querySelector('.scout-details-text-age');
-          const age = ageEl ? ageEl.textContent.replace('years', '').trim() : 'unknown';
-          
-          // Get speciality from skill-group-content
-          const skillGroupContent = card.querySelector('.skill-group-content');
-          const specialitySpan = skillGroupContent ? skillGroupContent.querySelector('span') : null;
-          const speciality = specialitySpan ? specialitySpan.textContent.trim() : 'unknown';
-          
-          const isSelected = card.querySelector('.scout-prospects-select.primary-button[value="Selected"]');
-          
-          // Attempt to get skills from DOM
-          const skillRows = card.querySelectorAll('table.skilltable tr');
-          let skills = { gk: 'unknown', def: 'unknown', pm: 'unknown', w: 'unknown', pa: 'unknown', sc: 'unknown', overall: 'unknown' };
-          
-          skillRows.forEach(row => {
-            const skillName = row.querySelector('td:first-child')?.textContent.trim().toLowerCase();
-            const skillValue = row.querySelector('ht-skill-number')?.textContent.trim();
-            
-            if (skillName === 'keeper') skills.gk = skillValue || 'unknown';
-            if (skillName === 'defending') skills.def = skillValue || 'unknown';
-            if (skillName === 'playmaking') skills.pm = skillValue || 'unknown';
-            if (skillName === 'winger') skills.w = skillValue || 'unknown';
-            if (skillName === 'passing') skills.pa = skillValue || 'unknown';
-            if (skillName === 'scoring') skills.sc = skillValue || 'unknown';
-            if (skillName === 'overall') skills.overall = skillValue || 'unknown';
-          });
-          
-          // Attempt to get scout information from DOM
-          let scoutInfo = { name: 'unknown', age: 'unknown', country: 'unknown', region: 'unknown', focus: 'unknown' };
-          
-          // Find corresponding scout card (same index as prospect)
-          const scoutCards = document.querySelectorAll('app-scout-card');
-          if (scoutCards[index]) {
-            const scoutCard = scoutCards[index];
-            const scoutNameEls = scoutCard.querySelectorAll('.scout-details-text-name b');
-            if (scoutNameEls.length >= 2) {
-              scoutInfo.name = `${scoutNameEls[0].textContent.trim()} ${scoutNameEls[1].textContent.trim()}`;
-            }
-            
-            const scoutAgeEl = scoutCard.querySelector('.scout-details-text-age');
-            if (scoutAgeEl) {
-              scoutInfo.age = scoutAgeEl.textContent.replace('years', '').trim();
-            }
-            
-            // Looking for search criteria for scout
-            const criteriaDiv = scoutCard.parentElement?.querySelector('app-scout-search-criteria');
-            if (criteriaDiv) {
-              const countryEl = criteriaDiv.querySelector('.scout-search-criteria-country');
-              if (countryEl) scoutInfo.country = countryEl.textContent.trim();
-              
-              const regionSelect = criteriaDiv.querySelector('.scout-search-criteria-region');
-              if (regionSelect && regionSelect.value) {
-                const selectedOption = regionSelect.querySelector(`option[value="${regionSelect.value}"]`);
-                if (selectedOption) scoutInfo.region = selectedOption.textContent.trim();
-              }
-              
-              const focusSelect = criteriaDiv.querySelector('.scout-search-criteria-player-type');
-              if (focusSelect && focusSelect.value) {
-                const selectedOption = focusSelect.querySelector(`option[value="${focusSelect.value}"]`);
-                if (selectedOption) scoutInfo.focus = selectedOption.textContent.trim();
-              }
-            }
-          }
-          
-          // Get team_id from DOM using hasByline class
-          let youthteam_id = 'unknown';
-          
-          // Look for team ID in element with class="hasByline"
-          const hasBylineElement = document.querySelector('.hasByline');
-          if (hasBylineElement) {
-            const match = hasBylineElement.textContent.match(/\((\d+)\)/);
-            if (match) {
-              youthteam_id = match[1];
-            }
-          }
-
-          const playerEntry = {
-            datetime: new Date().toISOString(),
-            youthteam_id: youthteam_id,
-            name: name,
-            age: age,
-            speciality: speciality,
-            gk: skills.gk,
-            def: skills.def,
-            pm: skills.pm, 
-            w: skills.w,
-            pa: skills.pa,
-            sc: skills.sc,
-            overall: skills.overall,
-            selected: isSelected ? true : false,
-            scout_name: scoutInfo.name,
-            scout_age: scoutInfo.age,
-            scout_country: scoutInfo.country,
-            scout_region: scoutInfo.region,
-            scout_focus: scoutInfo.focus
-          };
-          
-          console.log(`DOM parsing - player ${index + 1}:`, playerEntry);
-          players.push(playerEntry);
-        } catch (error) {
-          console.log(`Error processing player ${index}:`, error);
-        }
-      });
+    const prospectCards = document.querySelectorAll('app-scout-prospect');
+    const scoutCards = document.querySelectorAll('app-scout-card, .scout-card');
+    
+    if (prospectCards.length === 0) {
+      console.log('No prospect cards found');
+      return [];
     }
+    
+    const players = [];
+    const teamId = utils.extractTeamId();
+    
+    for (let i = 0; i < prospectCards.length; i++) {
+      try {
+        const card = prospectCards[i];
+        
+        const playerInfo = extractor.getPlayerInfo(card);
+        const skills = extractor.getSkills(card);
+        const scoutInfo = extractor.getScoutInfo(scoutCards, i);
+        const isSelected = !!card.querySelector('.scout-prospects-select.primary-button[value="Selected"]');
+
+        const playerEntry = {
+          timestamp: new Date().toISOString(),
+          youthteam_id: teamId,
+          name: playerInfo.name,
+          age: playerInfo.age,
+          speciality: playerInfo.speciality,
+          gk: skills.gk,
+          def: skills.def,
+          pm: skills.pm,
+          w: skills.w,
+          pa: skills.pa,
+          sc: skills.sc,
+          overall: skills.overall,
+          selected: isSelected ? true : false,
+          scout_name: scoutInfo.name,
+          scout_age: scoutInfo.age,
+          scout_country: scoutInfo.country,
+          scout_region: scoutInfo.region,
+          scout_focus: scoutInfo.focus
+        };
+        
+        console.log(`DOM parsing - player ${i + 1}:`, playerEntry);
+        players.push(playerEntry);
+        
+      } catch (error) {
+        console.log(`Error processing player ${i}:`, error);
+      }
+    }
+    
+    console.log(`Total extracted ${players.length} players`);
+    return players;
     
   } catch (error) {
     console.error('Error extracting player data:', error);
-    return []; // Return empty array if error occurs
+    return [];
   }
-  
-  return players;
 };
 
 // Helper functions for value mapping
@@ -226,7 +274,7 @@ const savePlayerData = async (players) => {
     // Check for duplicates based on name and time (within last 24 hours)
     const newData = players.filter(newPlayer => {
       const now = new Date();
-      const playerTime = new Date(newPlayer.datetime);
+      const playerTime = new Date(newPlayer.timestamp);
       const timeDiff = Math.abs(now - playerTime) / (1000 * 60 * 60); // difference in hours
       
       return !existingData.some(existing => 
