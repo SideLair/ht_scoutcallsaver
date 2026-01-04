@@ -6,6 +6,7 @@ A Chrome extension that automatically saves scout offers from Hattrick.org and e
 
 - **Automatic Scout Detection**: Monitors Hattrick pages and automatically saves scout offers
 - **CSV Export**: Export all collected scout data to CSV with sequential counter and timestamp
+- **Cloud Sync**: Sync data to Azure Data Lake for multi-device consolidation
 - **Data Management**: View statistics and clear stored data
 - **Persistent Storage**: Uses Chrome's local storage to persist data between sessions
 
@@ -19,11 +20,37 @@ A Chrome extension that automatically saves scout offers from Hattrick.org and e
 
 ## Usage
 
+### Basic Workflow
 1. Navigate to Hattrick.org and browse scout offers as usual
 2. The extension automatically detects and saves scout data in the background
 3. Click the extension icon to view statistics and export options
-4. Use "Download CSV" to export all saved scout data
-5. Use "Clear Data" to remove all stored scout information
+4. Use "Download CSV" to export all saved scout data locally
+5. Use "Sync to Cloud" to upload data to Azure Data Lake (see Cloud Sync Setup)
+6. Use "Clear Data" to remove all stored scout information from local storage
+
+### Cloud Sync Setup (Optional)
+If you want to consolidate data from multiple devices to Azure Data Lake:
+
+1. **Create Azure Storage Account**
+   - Set up Azure Blob Storage or Data Lake Gen2
+   - Create a container and CSV file for your scout data
+   - Generate a SAS token with Read, Add, and Write permissions
+
+2. **Configure the Extension**
+   - Create a `config.js` file in the extension directory (use `config.template.js` as reference)
+   - Add your Azure Blob SAS URL to the config
+   - The config.js file is gitignored for security
+
+3. **Multi-Device Setup**
+   - Store your SAS URL in a password manager
+   - Create config.js on each device with the same SAS URL
+   - Each device can now sync to the same Azure blob
+
+4. **Sync Workflow**
+   - Save scouts locally as usual
+   - Click "Sync to Cloud" when ready
+   - Data is appended to your Azure Data Lake CSV
+   - Manually clear local data after verifying successful sync
 
 ## CSV Export Format
 
@@ -54,7 +81,9 @@ The exported CSV contains the following columns:
 - `manifest.json` - Extension manifest and permissions
 - `content.js` - Content script that runs on Hattrick pages
 - `popup.html` - Extension popup interface
-- `popup.js` - Popup functionality and CSV export logic
+- `popup.js` - Popup functionality, CSV export, and Azure sync logic
+- `config.js` - Azure configuration (gitignored, create from template)
+- `.gitignore` - Protects sensitive config from being committed
 - `text_div.html` - Static HTML reference file
 
 ## Development
@@ -62,6 +91,13 @@ The exported CSV contains the following columns:
 The extension uses Chrome's Manifest V3 format and requires the following permissions:
 - `activeTab` - To access the current Hattrick tab
 - `storage` - To persist scout data locally
+- `host_permissions` - To connect to Azure Blob Storage (*.blob.core.windows.net)
+
+### Security Notes
+- Never commit `config.js` to version control (it contains SAS tokens)
+- Store SAS URLs in a password manager for easy multi-device setup
+- SAS tokens expire - update config.js before expiration date
+- Use least-privilege permissions when generating SAS tokens (Read, Add, Write only)
 
 ## License
 

@@ -91,12 +91,128 @@ async function clearData() {
   }
 }
 
+// Sync to Azure Blob Storage
+async function syncToAzure() {
+  // Check if sync is enabled
+  if (!AZURE_CONFIG.SYNC_ENABLED) {
+    showStatus('Cloud sync is disabled', 'error');
+    return;
+  }
+
+  const syncBtn = document.getElementById('syncBtn');
+  syncBtn.disabled = true;
+  syncBtn.textContent = 'Syncing...';
+
+  try {
+    // Get local data
+    const result = await chrome.storage.local.get(['scoutData']);
+    const localData = result.scoutData || [];
+
+    if (localData.length === 0) {
+      showStatus('No local data to sync', 'error');
+      syncBtn.disabled = false;
+      syncBtn.textContent = 'Sync to Cloud';
+      return;
+    }
+
+    // Download existing CSV from Azure
+    let existingData = [];
+    try {
+      const response = await fetch(AZURE_CONFIG.BLOB_SAS_URL);
+      if (response.ok) {
+        const csvText = await response.text();
+        if (csvText.trim()) {
+          // Parse existing CSV (skip header)
+          const lines = csvText.trim().split('\n');
+          if (lines.length > 1) {
+            existingData = lines.slice(1).map(line => {
+              // Simple CSV parsing (handles quoted fields)
+              const fields = line.match(/(".*?"|[^,]+)(?=\s*,|\s*$)/g).map(f => f.replace(/^"|"$/g, ''));
+              return fields;
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.log('No existing file or error reading:', error);
+      // Continue with empty existing data - will create new file
+    }
+
+    // Prepare headers
+    const headers = [
+      'id', 'timestamp', 'youthteam_id', 'name', 'age', 'speciality',
+      'gk', 'def', 'pm', 'w', 'pa', 'sc', 'overall', 'selected',
+      'scout_name', 'scout_age', 'scout_country', 'scout_region', 'scout_focus'
+    ];
+
+    // Convert local data to CSV rows
+    const newRows = localData.map(player => [
+      '', // id will be assigned below
+      player.timestamp,
+      player.youthteam_id,
+      `"${player.name}"`,
+      player.age,
+      `"${player.speciality}"`,
+      player.gk,
+      player.def,
+      player.pm,
+      player.w,
+      player.pa,
+      player.sc,
+      player.overall,
+      player.selected,
+      `"${player.scout_name}"`,
+      player.scout_age,
+      `"${player.scout_country}"`,
+      `"${player.scout_region}"`,
+      `"${player.scout_focus}"`
+    ]);
+
+    // Combine existing and new data
+    const allRows = [...existingData, ...newRows];
+
+    // Assign sequential IDs
+    const rowsWithIds = allRows.map((row, index) => {
+      row[0] = index + 1; // Set id column
+      return row.join(',');
+    });
+
+    // Create final CSV
+    const csvContent = [headers.join(','), ...rowsWithIds].join('\n');
+
+    // Upload to Azure using PUT with SAS URL
+    const uploadResponse = await fetch(AZURE_CONFIG.BLOB_SAS_URL, {
+      method: 'PUT',
+      headers: {
+        'x-ms-blob-type': 'BlockBlob',
+        'Content-Type': 'text/csv'
+      },
+      body: csvContent
+    });
+
+    if (!uploadResponse.ok) {
+      throw new Error(`Upload failed: ${uploadResponse.status} ${uploadResponse.statusText}`);
+    }
+
+    const newRowsCount = localData.length;
+    showStatus(`Synced ${newRowsCount} rows to cloud`, 'success');
+    console.log(`✅ Successfully synced ${newRowsCount} rows to Azure`);
+
+  } catch (error) {
+    console.error('Sync error:', error);
+    showStatus(`Sync failed: ${error.message}`, 'error');
+  } finally {
+    syncBtn.disabled = false;
+    syncBtn.textContent = 'Sync to Cloud';
+  }
+}
+
 // Display status
 function showStatus(message, type) {
   const statusEl = document.getElementById('status');
   statusEl.textContent = message;
   statusEl.className = `status ${type}`;
-  
+
   setTimeout(() => {
     statusEl.textContent = '';
     statusEl.className = 'status';
@@ -106,6 +222,7 @@ function showStatus(message, type) {
 // Event listeners and initialization
 document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('exportBtn').addEventListener('click', exportCSV);
+  document.getElementById('syncBtn').addEventListener('click', syncToAzure);
   document.getElementById('clearBtn').addEventListener('click', clearData);
   loadStats();
 });

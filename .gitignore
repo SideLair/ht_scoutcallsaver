@@ -1,0 +1,15 @@
+# Security: Never commit Azure credentials
+config.js
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+
+# Chrome extension artifacts
+*.pem
+*.crx
+*.zip
